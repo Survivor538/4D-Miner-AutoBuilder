@@ -1,0 +1,887 @@
+下面给你一份**这套坐标识别程序的操作指南**。我会按“能直接上手”的方式来写，重点包含：
+
+- 这程序是干什么的
+- 怎么配置
+- 怎么运行
+- **怎么在另一个程序里调用**
+- 常见问题和调试方法
+
+---
+
+# 坐标识别程序操作指南
+
+## 1. 功能说明
+
+这套程序用于**从游戏画面中截图并识别 7 个数值**，通常是：
+
+- 位置：
+  - `pos_x`
+  - `pos_y`
+  - `pos_z`
+  - `pos_w`
+- 朝向：
+  - `face_x`
+  - `face_z`
+  - `face_w`
+
+程序会：
+
+1. 截取屏幕指定区域
+2. 找到坐标文本所在行
+3. 按颜色拆分字段
+4. 用模板匹配识别字符
+5. 返回最终的 7 个浮点数结果
+
+---
+
+# 2. 返回结果格式
+
+你当前这版 `main.py` 里，最重要的对外接口是：
+
+```python
+get_7coords()
+```
+
+它的返回值规则是：
+
+## 成功时
+返回一个长度为 7 的元组：
+
+```python
+(pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w)
+```
+
+例如：
+
+```python
+(123.4, 64.0, -88.5, 1.0, 0.0, -1.0, 0.0)
+```
+
+## 失败时
+返回：
+
+```python
+False
+```
+
+---
+
+# 3. 目录结构建议
+
+建议你的项目结构类似这样：
+
+```text
+project/
+│
+├─ main.py
+├─ roi_config.json
+├─ color_thresholds.json
+├─ debug/
+│
+└─ templates/
+   └─ color/
+      ├─ 0_1.png
+      ├─ 1_1.png
+      ├─ 2_1.png
+      ├─ ...
+      ├─ 9_1.png
+      ├─ dot_1.png
+      ├─ minus_1.png
+      ├─ colon_1.png
+      ├─ x_1.png
+      ├─ y_1.png
+      ├─ z_1.png
+      ├─ w_1.png
+      ├─ p_1.png
+      ├─ o_1.png
+      ├─ s_1.png
+      ├─ i_1.png
+      ├─ t_1.png
+      └─ n_1.png
+```
+
+---
+
+# 4. 运行前准备
+
+## 4.1 安装依赖
+
+如果还没装依赖，先安装：
+
+```bash
+pip install opencv-python numpy pyautogui
+```
+
+如果你环境里还缺 Pillow，也顺手装上：
+
+```bash
+pip install pillow
+```
+
+---
+
+## 4.2 确认游戏画面能被正常截图
+
+程序依赖：
+
+```python
+pyautogui.screenshot()
+```
+
+所以要保证：
+
+- 游戏窗口是可见的
+- 不要被别的窗口挡住
+- 最好固定分辨率和 UI 缩放
+- 运行时鼠标别乱动到会遮挡文本的位置
+
+---
+
+# 5. 配置项说明
+
+你现在这版 `main.py` 里，最关键的配置主要分成 4 类：
+
+---
+
+## 5.1 截图区域配置
+
+代码里有这一组常量：
+
+```python
+CAPTURE_X_START = 0.50
+CAPTURE_X_END   = 1.00
+CAPTURE_Y_START = 0.80
+CAPTURE_Y_END   = 1.00
+```
+
+它们表示：
+
+- 从整张屏幕中，截取一个**相对比例区域**
+- 范围是 `0~1`
+
+例如：
+
+```python
+CAPTURE_X_START = 0.50
+CAPTURE_X_END   = 1.00
+```
+
+表示横向取屏幕右半部分。
+
+```python
+CAPTURE_Y_START = 0.80
+CAPTURE_Y_END   = 1.00
+```
+
+表示纵向取屏幕底部 20%。
+
+## 什么时候要改？
+如果你的坐标显示位置不在当前截图区域内，就要改这里。
+
+## 怎么调？
+如果识别不到，建议先把范围调大一点，例如：
+
+```python
+CAPTURE_X_START = 0.30
+CAPTURE_X_END   = 1.00
+CAPTURE_Y_START = 0.70
+CAPTURE_Y_END   = 1.00
+```
+
+然后看 `debug/full_crop.png` 是否已经包含目标文本。
+
+---
+
+## 5.2 调试与投票配置
+
+你代码里有：
+
+```python
+DEBUG = True
+VOTE_FRAMES = 1
+VOTE_SLEEP = 0.06
+```
+
+### `DEBUG`
+是否输出调试图片。
+
+- `True`：保存调试图到 `debug/`
+- `False`：不保存
+
+建议开发阶段保持：
+
+```python
+DEBUG = True
+```
+
+---
+
+### `VOTE_FRAMES`
+连续识别多少帧，然后做投票。
+
+例如：
+
+```python
+VOTE_FRAMES = 3
+```
+
+表示程序会连读 3 次，再综合结果。
+
+如果你画面稳定，`1` 就够用。  
+如果偶尔识别跳字，可以试试 `3~5`。
+
+---
+
+### `VOTE_SLEEP`
+多帧识别之间的间隔秒数，例如：
+
+```python
+VOTE_SLEEP = 0.06
+```
+
+一般不用大改。
+
+---
+
+## 5.3 模板匹配阈值
+
+代码中有：
+
+```python
+COLOR_GOOD_SCORE = 0.78
+COLOR_MIN_SCORE = 0.58
+```
+
+### 含义
+- `COLOR_GOOD_SCORE`：匹配得分高于这个值，通常认为比较可靠
+- `COLOR_MIN_SCORE`：低于这个值，结果可能不可信
+
+### 建议
+先不要乱改。  
+如果你已经确定模板质量不错，但总是被判太低，可以略微下调：
+
+```python
+COLOR_MIN_SCORE = 0.55
+```
+
+如果误识别太多，可以略微上调。
+
+---
+
+## 5.4 字符集配置
+
+代码中有：
+
+```python
+TEMPLATE_ALLOWED_CHARS = set("0123456789.-:xyzwpositn")
+FINAL_NUMBER_CHARS = set("0123456789.-")
+```
+
+这表示：
+
+- 模板阶段允许识别数字、点、负号、冒号、以及 `x y z w position` 相关字母
+- 最终数值清洗时，只保留：
+
+```text
+0123456789 . -
+```
+
+所以像：
+
+- `x:123.4`
+- `position`
+- `y:-64.0`
+
+最终都会被提取成合法数字。
+
+---
+
+# 6. 配置文件说明
+
+---
+
+## 6.1 `roi_config.json`
+
+这个文件用于定义 ROI（感兴趣区域）。
+
+从你现在代码结构看，**至少要包含**：
+
+- `position_line`
+- `facing_line`
+
+也就是先截取两整行：
+
+- 一行位置文本
+- 一行朝向文本
+
+例如：
+
+```json
+{
+  "position_line": {
+    "roi": [20, 50, 500, 40]
+  },
+  "facing_line": {
+    "roi": [20, 100, 500, 40]
+  }
+}
+```
+
+其中：
+
+```text
+[x, y, w, h]
+```
+
+含义是相对于 `full_crop.png` 的局部坐标：
+
+- `x`: 左上角横坐标
+- `y`: 左上角纵坐标
+- `w`: 宽度
+- `h`: 高度
+
+---
+
+## 6.2 如何确定 ROI
+
+最简单流程：
+
+### 第一步：运行一次 `main.py`
+程序会生成：
+
+```text
+debug/full_crop.png
+```
+
+### 第二步：查看 `full_crop.png`
+确认截图区域中已经包含：
+
+- Position 那一行
+- Facing 那一行
+
+### 第三步：用工具选 ROI
+你项目里有一个 `pick_roi.py` 的思路示例，它本质上就是用 OpenCV 框选区域。
+
+你可以自己写两个版本，或者直接改成选：
+
+- `position_line`
+- `facing_line`
+
+如果你想手动写，也可以直接量坐标。
+
+---
+
+## 6.3 `color_thresholds.json`
+
+这个文件用于定义颜色分离阈值。
+
+程序会按颜色拆分字段，比如：
+
+- 蓝色 → `x`
+- 白色 → `y`
+- 红色 → `z`
+- 绿色 → `w`
+
+一个示例结构可以是：
+
+```json
+{
+  "blue": {
+    "lower": [200, 100, 0],
+    "upper": [255, 220, 120]
+  },
+  "white": {
+    "lower": [200, 200, 200],
+    "upper": [255, 255, 255]
+  },
+  "red": {
+    "lower": [0, 0, 180],
+    "upper": [120, 120, 255]
+  },
+  "green": {
+    "lower": [0, 180, 0],
+    "upper": [140, 255, 140]
+  }
+}
+```
+
+具体数值要根据你的实际截图调。
+
+---
+
+# 7. 模板目录配置
+
+模板目录通常是：
+
+```python
+templates/color
+```
+
+你当前程序会从这里加载模板图。
+
+---
+
+## 7.1 文件命名规则
+
+格式：
+
+```text
+标签_编号.png
+```
+
+例如：
+
+```text
+0_1.png
+1_1.png
+dot_1.png
+minus_1.png
+colon_1.png
+x_1.png
+y_1.png
+z_1.png
+w_1.png
+p_1.png
+o_1.png
+s_1.png
+i_1.png
+t_1.png
+n_1.png
+```
+
+---
+
+## 7.2 推荐模板清单
+
+至少建议有：
+
+```text
+0_1.png ~ 9_1.png
+dot_1.png
+minus_1.png
+colon_1.png
+x_1.png
+y_1.png
+z_1.png
+w_1.png
+p_1.png
+o_1.png
+s_1.png
+i_1.png
+t_1.png
+n_1.png
+```
+
+---
+
+## 7.3 模板制作建议
+
+模板必须满足：
+
+- 从**游戏真实截图**里裁
+- 字体、大小、颜色形态尽量一致
+- 不要用系统字体替代
+- 尽量黑底白字或与 mask 结果一致
+
+如果你用了我前面说的“垂直合并连通域”方案，那么：
+
+- `:` 会作为一个完整字符参与匹配
+- `i` 也会作为一个完整字符参与匹配
+
+这样 `colon_1.png` 和 `i_1.png` 才能真正发挥作用。
+
+---
+
+# 8. 如何运行
+
+最简单的方式：
+
+```bash
+python main.py
+```
+
+程序会：
+
+1. 等待几秒
+2. 截图
+3. 识别
+4. 输出结果
+
+你当前代码里测试入口大概会打印：
+
+```text
+===== 最终结果 =====
+(...)
+```
+
+如果失败则打印：
+
+```text
+False
+```
+
+---
+
+# 9. 如何在另一个程序里调用
+
+这是你特别关心的部分，我重点写。
+
+---
+
+## 9.1 最简单调用方式
+
+假设你的主程序文件名就叫 `main.py`，在另一个 Python 文件里写：
+
+```python
+from main import get_7coords
+
+coords = get_7coords()
+
+if coords is False:
+    print("识别失败")
+else:
+    pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w = coords
+    print("识别成功：", coords)
+```
+
+---
+
+## 9.2 调用返回值说明
+
+`get_7coords()` 返回顺序固定为：
+
+```python
+(pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w)
+```
+
+所以你可以直接拆包：
+
+```python
+pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w = get_7coords()
+```
+
+但要注意，失败时会返回 `False`，所以更安全写法是：
+
+```python
+result = get_7coords()
+
+if result is False:
+    print("读取失败")
+else:
+    pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w = result
+```
+
+---
+
+## 9.3 在循环程序中调用
+
+比如你有一个自动控制程序，需要每隔一段时间读取一次坐标：
+
+```python
+import time
+from main import get_7coords
+
+while True:
+    result = get_7coords()
+
+    if result is False:
+        print("坐标读取失败")
+    else:
+        pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w = result
+        print(f"当前位置: x={pos_x}, y={pos_y}, z={pos_z}")
+
+    time.sleep(0.2)
+```
+
+---
+
+## 9.4 封装成你自己的业务逻辑
+
+例如你想在另一个程序里判断是否到达某个目标点：
+
+```python
+from main import get_7coords
+
+def near_target(tx, ty, tz, tol=1.0):
+    result = get_7coords()
+    if result is False:
+        return False
+
+    pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w = result
+
+    return (
+        abs(pos_x - tx) <= tol and
+        abs(pos_y - ty) <= tol and
+        abs(pos_z - tz) <= tol
+    )
+
+if near_target(100, 64, -50):
+    print("已接近目标点")
+else:
+    print("还没到")
+```
+
+---
+
+# 10. 推荐的二次封装方式
+
+如果你打算长期给别的程序调用，建议你再包一层，别让外部代码直接面对 `False`。
+
+比如新建一个文件 `coords_api.py`：
+
+```python
+from main import get_7coords
+
+def read_coords_dict():
+    result = get_7coords()
+    if result is False:
+        return None
+
+    pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w = result
+
+    return {
+        "pos_x": pos_x,
+        "pos_y": pos_y,
+        "pos_z": pos_z,
+        "pos_w": pos_w,
+        "face_x": face_x,
+        "face_z": face_z,
+        "face_w": face_w,
+    }
+```
+
+然后别的程序这样调用：
+
+```python
+from coords_api import read_coords_dict
+
+data = read_coords_dict()
+
+if data is None:
+    print("读取失败")
+else:
+    print(data["pos_x"], data["pos_y"], data["pos_z"])
+```
+
+这样会更清晰。
+
+---
+
+# 11. 调试建议
+
+如果识别不准，优先检查这几个地方。
+
+---
+
+## 11.1 看 `debug/full_crop.png`
+确认整张截图区域是对的。
+
+如果目标文本根本不在里面，后面全都白搭。
+
+---
+
+## 11.2 看 `position_line.png` 和 `facing_line.png`
+确认 ROI 框对了。
+
+如果只截到半行，识别一定不准。
+
+---
+
+## 11.3 看颜色 mask
+确认：
+
+- 蓝色字段真的被分到蓝色
+- 白色字段真的被分到白色
+- 红色字段真的被分到红色
+- 绿色字段真的被分到绿色
+
+如果颜色阈值不准，就调 `color_thresholds.json`。
+
+---
+
+## 11.4 看字符切分结果
+如果你已经加了“垂直合并字符”逻辑，要重点确认：
+
+- `:` 不再被拆成两个点
+- `i` 不再被拆成点和竖线
+
+如果还拆，优先调这些参数：
+
+- `x_center_tol`
+- `y_gap_tol_ratio`
+
+---
+
+## 11.5 看模板匹配得分
+如果经常低于：
+
+```python
+COLOR_MIN_SCORE
+```
+
+说明可能有这些问题：
+
+- 模板本身不清晰
+- 字符切分不完整
+- 缩放比例不匹配
+- 颜色 mask 太脏
+
+---
+
+# 12. 常见问题
+
+---
+
+## 问题 1：另一个程序 import `main.py` 时会不会自动执行？
+不会，只要你保留这种结构：
+
+```python
+if __name__ == "__main__":
+    main()
+```
+
+那只有直接运行：
+
+```bash
+python main.py
+```
+
+才会执行 `main()`。
+
+如果是：
+
+```python
+from main import get_7coords
+```
+
+就不会自动跑测试入口。
+
+---
+
+## 问题 2：为什么调用时经常返回 `False`？
+常见原因：
+
+- ROI 配错
+- 截图区域没截到目标
+- 模板不全
+- 颜色阈值不对
+- 游戏界面被遮挡
+- 分辨率或 UI 缩放变化了
+
+---
+
+## 问题 3：为什么数字偶尔少一位或多一个点？
+常见原因：
+
+- 字符切分错误
+- `:` 被拆开
+- `i` 被拆开
+- 模板混淆了 `.` 和 `:`
+- 图像有噪声
+
+这就是你前面加“垂直相邻连通域合并”的价值所在。
+
+---
+
+# 13. 推荐使用流程
+
+我建议你每次部署到新环境时都按这个顺序：
+
+## 第一步：先调截图区域
+让 `full_crop.png` 包含目标文字。
+
+## 第二步：调 ROI
+让 `position_line` 和 `facing_line` 正好框住对应行。
+
+## 第三步：调颜色阈值
+确保每种颜色都能单独分离出来。
+
+## 第四步：补模板
+确保数字和字母模板齐全。
+
+## 第五步：检查字符切分
+确认 `:`、`i` 等特殊字符已合并。
+
+## 第六步：再接入外部程序调用
+最后再写自动化逻辑，不要一上来就联调大项目。
+
+---
+
+# 14. 一个完整的外部调用示例
+
+下面给你一个比较完整的例子。
+
+## `bot.py`
+
+```python
+import time
+from main import get_7coords
+
+def run():
+    while True:
+        result = get_7coords()
+
+        if result is False:
+            print("[bot] 坐标识别失败")
+            time.sleep(0.2)
+            continue
+
+        pos_x, pos_y, pos_z, pos_w, face_x, face_z, face_w = result
+
+        print(
+            f"[bot] pos=({pos_x}, {pos_y}, {pos_z}, {pos_w}) "
+            f"face=({face_x}, {face_z}, {face_w})"
+        )
+
+        # 这里写你的业务逻辑
+        # 比如导航、判断、状态切换等
+
+        time.sleep(0.2)
+
+if __name__ == "__main__":
+    run()
+```
+
+运行：
+
+```bash
+python bot.py
+```
+
+---
+
+# 15. 最后的建议
+
+如果你接下来准备让这个程序长期给别的模块调用，我建议你再做两件事：
+
+## 建议 1：把配置集中到文件里
+不要全放在代码常量里，后期维护会更轻松。
+
+比如把这些都放进 `settings.json`：
+
+- 截图比例
+- 投票参数
+- 阈值参数
+- debug 开关
+
+---
+
+## 建议 2：把对外接口固定住
+推荐统一暴露一个接口：
+
+```python
+get_7coords()
+```
+
+外部程序只依赖它，不依赖内部实现。  
+这样以后你改：
+
+- ROI 方式
+- 切分方式
+- 模板匹配方式
+- 调试结构
+
+都不会影响调用方。
+
+---
+
